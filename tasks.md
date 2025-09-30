@@ -4,201 +4,186 @@ This document outlines the development phases and tasks required to implement th
 
 ---
 
-> **Note:** Go handles the signaling server, Rust powers the desktop client, and Kotlin is used for the Android app.
+> **Note:** All components are implemented in Rust, with Tauri for cross-platform UI (desktop and mobile). The signaling server is embedded as a Rust module using crates like `axum` or `warp`, not a separate subprocess.
 
 ---
 
-## Phase 1: Core Infrastructure (Signaling & QR)
-> **Info:** Tasks 1–5 should be implemented using Go, and tasks 6-9 using Rust.
+## Phase 0: Desktop-to-Desktop MVP (PC-PC Remote Control)
+> **Info:** Focus on Rust-only implementation for desktop-to-desktop to validate core functionality before adding mobile.
 
-### Task 1: Create basic Go signaling server
-- [ ] Set up a basic HTTP server that upgrades to WebSocket
-- [ ] Accept incoming WebSocket connections and assign client roles (mobile or desktop)
-- [ ] Build a message routing system based on sessionID and role
-- [ ] Define basic JSON input/output handling with decoding and validation
+### Task 1: Set up basic Rust desktop app with embedded signaling
+- [ ] Initialize Rust project with `cargo new proxim-desktop`
+- [ ] Embed WebSocket server using `axum` or `warp` for signaling
+- [ ] Handle WebSocket connections and assign roles (host or client)
+- [ ] Build message routing based on sessionID
+- [ ] Define basic JSON handling with `serde`
 
 ### Task 2: Define signaling message types and schema
-- [ ] Create Go structs for each message type: `pair_request`, `pair_prompt`, `pair_response`, `pair_result`, `signal`
-- [ ] Implement JSON unmarshalling with validation for each struct
-- [ ] Add unit tests for message validation and structure enforcement
-- [ ] Implement error responses for unknown or invalid message types
+- [ ] Create Rust structs for message types: `pair_request`, `pair_prompt`, `pair_response`, `pair_result`, `signal`
+- [ ] Implement serialization/deserialization with validation
+- [ ] Add unit tests for message handling
+- [ ] Implement error responses
 
 ### Task 3: Implement in-memory session store
-- [ ] Define a `Session` struct: includes sessionID, UUID, createdAt, expiresAt, status, deviceInfo
-- [ ] Use a thread-safe `map[string]Session` with `sync.Mutex` or `sync.Map`
-- [ ] Implement `createSession(sessionID, UUID, expiresAt)`
-- [ ] Implement `getSession(sessionID)`, `updateSession(sessionID, newState)`, `deleteSession(sessionID)`
-- [ ] Build a background task to periodically clean expired sessions
+- [ ] Define `Session` struct: sessionID, UUID, createdAt, expiresAt, status, deviceInfo
+- [ ] Use thread-safe HashMap with `tokio::sync::Mutex`
+- [ ] Implement create, get, update, delete functions
+- [ ] Add background task with `tokio::spawn` for cleaning expired sessions
 
-### Task 4: Handle pairing requests
-- [ ] On receiving `pair_request`, check if sessionID exists and is in `pending` state
-- [ ] Attach `deviceInfo` to the session
-- [ ] Forward a `pair_prompt` message to the appropriate desktop connection
-- [ ] Store timestamp of the pairing attempt
-- [ ] Enforce single active request per sessionID
+### Task 4: Handle pairing requests (PC-PC)
+- [ ] On `pair_request`, check sessionID and forward `pair_prompt` to host
+- [ ] Attach deviceInfo
+- [ ] Enforce single request per sessionID
 
 ### Task 5: Auto-expire session and pairing
-- [ ] Implement a 40-second pairing request timeout timer per session
-- [ ] Mark sessions as `rejected` if no `pair_response` is received
-- [ ] Mark sessions as `expired` after global `expiresAt` timestamp passes
-- [ ] Remove fully expired sessions from memory in cleanup loop
-- [ ] Log expiration events for debugging
+- [ ] Implement 40-second timeout per session
+- [ ] Mark as rejected/expired if no response
+- [ ] Log events
 
-### Task 6: Create minimal Rust desktop app stub
-- [ ] Initialize new Rust project with `cargo new proxim-desktop`
-- [ ] Add basic CLI using `clap` or minimal window using `egui` or `fltk`
-- [ ] Print debug logs to console when app launches
-- [ ] Display placeholder text or simple UI to indicate running state
+### Task 6: Generate UUID and sessionID
+- [ ] Generate and save UUID to disk using `uuid` crate
+- [ ] Generate sessionID on pairing
 
-### Task 7: Generate UUID and sessionID
-- [ ] On first launch, check for existing UUID file, otherwise generate new UUID using `uuid` crate
-- [ ] Save UUID to disk (e.g., `~/.proxim/uuid`)
-- [ ] Generate a random sessionID on each pairing using alphanumeric string
-- [ ] Associate sessionID and UUID to new session request
-- [ ] Prepare struct to send to signaling server
+### Task 7: Display and scan QR code (for PC-PC testing)
+- [ ] Generate QR with `qrcode` crate for host
+- [ ] For client PC, implement basic QR scanning using `rqrr` and webcam access (via `opencv-rust` or similar for testing)
+- [ ] Render QR in GUI using `iced` or `egui`
 
-### Task 8: Launch signaling server as subprocess
-- [ ] Include `proxim-server.exe` in project directory or embed into build artifacts
-- [ ] Use `std::process::Command` to start signaling server from Rust
-- [ ] Capture and log stdout/stderr from subprocess
-- [ ] Handle automatic restart if subprocess crashes unexpectedly
-- [ ] Kill process gracefully on app exit
+### Task 8: Integrate WebRTC for PC-PC
+- [ ] Use `webrtc-rs` crate
+- [ ] Set up SDP/ICE handling
+- [ ] Establish P2P connection after approval
 
-### Task 9: Display QR code
-- [ ] Create QR content object: includes UUID, sessionID, and optional IP:port
-- [ ] Serialize content as JSON string
-- [ ] Use `qrcode` crate to generate QR bitmap
-- [ ] Render in terminal (for CLI) or in image widget (for GUI)
-- [ ] Handle QR expiration or regeneration when session is removed
+### Task 9: Basic control (mouse/keyboard) for PC-PC
+- [ ] Use `enigo` crate for input simulation on host
+- [ ] Send inputs via WebRTC data channel from client
+
+---
+
+## Phase 1: Core Infrastructure (Signaling & QR) – Extend to Mobile
+> **Info:** Build on Phase 0, adding Tauri for mobile support. Tasks use Rust + Tauri (HTML/JS frontend).
+
+### Task 1: Set up Tauri for cross-platform (desktop + mobile)
+- [ ] Add Tauri to Rust project: `cargo install tauri-cli`
+- [ ] Configure for desktop and mobile (Android/iOS) builds
+- [ ] Use HTML/JS for UI, invoke Rust commands
+
+### Task 2: Mobile QR scanner in Tauri
+- [ ] Use JS lib like `jsQR` in WebView for camera access
+- [ ] Parse QR data and invoke Rust for connection
+
+### Task 3: Connect from mobile to signaling
+- [ ] Establish WebSocket from JS, bridge to Rust backend
+
+### Task 4: Extend pairing for mobile-to-desktop
+- [ ] Adapt Phase 0 logic for mobile client role
+- [ ] Update UI for mobile approval flow
+
+### Task 5: Auto-expire session and pairing
+- [ ] Reuse Phase 0 logic, ensure mobile compatibility
+- [ ] Add mobile UI feedback for expiration
+
+### Task 6: Display QR code on desktop
+- [ ] Reuse Phase 0 QR generation
+- [ ] Optimize for Tauri desktop UI (ensure responsive)
 
 ---
 
 ## Phase 2: Mobile Pairing & Approval Flow
-> **Info:** Tasks 1–4 should be implemented using Kotlin, tasks 5-6 using Rust, and task 7 using Go & Kotlin.
+> **Info:** Fully integrate mobile with Tauri. Tasks in Rust/Tauri.
 
-### Task 1: Build Kotlin mobile app skeleton
-- [ ] Create Android Studio project with minimum SDK 24+
-- [ ] Set up single Activity and navigation controller (if needed)
-- [ ] Add required permissions for camera and internet
-- [ ] Test project builds and launches on emulator/device
+### Task 1: Implement mobile pairing UI
+- [ ] Create HTML/JS UI for scanning and approval feedback
+- [ ] Handle pair_prompt, pair_response via Tauri commands
 
-### Task 2: Implement QR code scanner
-- [ ] Add camera preview using CameraX or ZXing
-- [ ] Scan and decode QR code into structured data
-- [ ] Parse sessionID, UUID, and optional IP:port from scanned result
-- [ ] Show confirmation screen after scanning
+### Task 2: Handle pairing approval on desktop
+- [ ] Display deviceInfo in Tauri desktop UI
+- [ ] Implement approve/reject buttons with 40-second timeout
 
-### Task 3: Connect to signaling server from mobile
-- [ ] Establish WebSocket connection to scanned IP/port
-- [ ] Handle connection success/failure with UI feedback
-- [ ] Keep connection alive during pairing attempt
-
-### Task 4: Send `pair_request` message
-- [ ] Construct JSON message with type `pair_request`
-- [ ] Include sessionID and deviceInfo (model, name, ID)
-- [ ] Send over WebSocket and await response
-
-### Task 5: Handle pairing prompt in Rust app
-- [ ] Listen for `pair_prompt` message from signaling server
-- [ ] Display prompt UI with device name + identifier
-- [ ] Start 40-second countdown timer
-- [ ] Show Approve / Reject buttons to user
-
-### Task 6: Auto-expire or manually approve
-- [ ] On Approve → send `pair_response` with `approved = true`
-- [ ] On Reject → send `pair_response` with `approved = false`
-- [ ] If 40 seconds pass → mark session as `expired`, no message sent
-
-### Task 7: Notify mobile app of result
-- [ ] Server forwards `pair_result` to mobile client
-- [ ] If approved, mobile transitions to next state (WebRTC negotiation)
-- [ ] If rejected or expired, show error and option to rescan
+### Task 3: Notify mobile of pairing result
+- [ ] Send pair_result to mobile via signaling
+- [ ] Show success/error on mobile UI
 
 ---
 
 ## Phase 3: WebRTC Channel Establishment
-> **Note:** WebRTC and STUN setup is entirely handled by the desktop (Rust) and mobile (Android) apps. The signaling server (Go) only relays messages and does not interact with STUN or WebRTC directly.
-> **Info:** Task 1 should be implemented using Rust, task 2 using Kotlin, task 3 using Go, and task 4 using Rust & Kotlin.
+> **Note:** WebRTC handled by Rust on both ends. Signaling relayed via embedded Rust server.
 
-### Task 1: Integrate WebRTC in Rust
-- [ ] Choose and configure `webrtc-rs` or equivalent crate
-- [ ] Set up SDP and ICE handling
-- [ ] Expose signaling handlers (send/receive over WebSocket)
+### Task 1: Integrate WebRTC in Rust (desktop)
+- [ ] Reuse Phase 0 WebRTC setup
+- [ ] Optimize for mobile compatibility
 
-### Task 2: Integrate WebRTC in Android
-- [ ] Add WebRTC dependency via gradle
-- [ ] Create peer connection and data channel setup logic
-- [ ] Handle ICE candidates and connection state
+### Task 2: Integrate WebRTC in Tauri (mobile)
+- [ ] Use `webrtc-rs` via Tauri Rust backend
+- [ ] Handle SDP/ICE in JS, bridge to Rust
 
-### Task 3: Implement signaling relay via server
-- [ ] Forward `signal` type messages between peers via signaling server
-- [ ] Include payload for SDP and ICE
-- [ ] Ensure message order and delivery correctness
+### Task 3: Implement signaling relay
+- [ ] Reuse Phase 0 signaling logic
+- [ ] Ensure compatibility with mobile WebSocket
 
 ### Task 4: Establish working P2P connection
-- [ ] Confirm that peer connection forms over LAN
-- [ ] Test NAT traversal with public STUN servers
-- [ ] Log ICE connection status on both ends
+- [ ] Test desktop-to-desktop and mobile-to-desktop
+- [ ] Use public STUN servers for NAT traversal
+- [ ] Log ICE connection status
 
 ---
 
 ## Phase 4: Remote Control Functionality
-> **Info:** Tasks 1-4 should be implemented using Kotlin & Rust, and task 5 using Rust.
+> **Info:** Tasks for desktop and mobile in Rust/Tauri.
 
 ### Task 1: Handle mouse input from mobile
-- [ ] Capture touch/motion events on Android
-- [ ] Translate to relative or absolute cursor position
-- [ ] Send as WebRTC data message to desktop
-- [ ] Move system cursor using Rust on Windows APIs
+- [ ] Capture touch events in Tauri JS
+- [ ] Send as WebRTC data message
+- [ ] Simulate on desktop with `enigo`
 
 ### Task 2: Handle keyboard input from mobile
-- [ ] Capture soft keyboard input from Android
-- [ ] Package key codes and modifiers
-- [ ] Send as WebRTC message
-- [ ] Simulate key press in Rust using native libraries
+- [ ] Capture keyboard events in Tauri JS
+- [ ] Send via WebRTC
+- [ ] Simulate with `enigo`
 
 ### Task 3: System-level commands
-- [ ] Add shutdown, restart, sleep buttons to mobile UI
-- [ ] Send command via WebRTC
-- [ ] Execute corresponding system command on desktop (with confirmation)
+- [ ] Add buttons in Tauri mobile UI
+- [ ] Send commands via WebRTC
+- [ ] Execute on desktop with confirmation
 
 ### Task 4: Display connection status
-- [ ] Show active/disconnected status in mobile and desktop
-- [ ] Handle reconnection or unexpected disconnects
+- [ ] Show status in Tauri UI (desktop/mobile)
+- [ ] Handle reconnects/disconnects
 
 ### Task 5: Allow session termination
 - [ ] Add "End Session" button in desktop UI
-- [ ] On click: close WebRTC, mark session inactive, notify peer
+- [ ] Close WebRTC, notify peer
 
 ---
 
 ## Phase 5: Stability & Polishing
-> **Info:** Tasks 1–2 should be implemented Go, Rust & Kotlin, task 3 using Rust, task 4 using Rust & build tools, and task 5 using Kotlin & Rust.
+> **Info:** General improvements for Rust/Tauri.
 
 ### Task 1: Improve error handling
-- [ ] Add retries and backoff for WebSocket failures
-- [ ] Validate message fields rigorously
+- [ ] Add retries for WebSocket failures
+- [ ] Validate messages rigorously
 
 ### Task 2: Add optional session logs
-- [ ] Track session creation, approval, expiration events
-- [ ] Store temporarily in memory or optional local file
+- [ ] Track session events in memory
+- [ ] Optional file logging
 
 ### Task 3: Optimize startup/shutdown
-- [ ] Reduce launch time for server subprocess
-- [ ] Graceful shutdown for all components
+- [ ] Reduce app launch time
+- [ ] Graceful shutdown
 
 ### Task 4: Package and distribute
-- [ ] Bundle desktop app and signaling server
-- [ ] Create installer or archive with versioning
+- [ ] Bundle Tauri apps for desktop/mobile
+- [ ] Create installers with versioning
 
 ### Task 5: UI design polish
-- [ ] Unify mobile and desktop UI style
-- [ ] Add loading indicators, confirmation dialogs, and error prompts
+- [ ] Unify Tauri UI style
+- [ ] Add loading indicators, dialogs
 
 ---
 
 ## Notes
 
-- Phases are ordered logically but may overlap
-- Each major step should be followed by Git commit (with message like: `feat: Complete X`)
-- Minimum viable product (MVP) target = Phase 1 + Phase 2 + basic WebRTC link
+- Start with Phase 0 for desktop-to-desktop MVP.
+- Extend to mobile-to-desktop in Phase 1+.
+- Commit after each major step (e.g., `feat: Complete signaling`).
+- MVP = Phase 0 + basic WebRTC.

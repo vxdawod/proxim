@@ -1,86 +1,78 @@
 # System Architecture – Proxim
 
-This document describes the high-level system architecture of the Proxim remote desktop control system. It outlines how the desktop application, mobile application, and embedded signaling server interact to establish a secure peer-to-peer control session.
+This document describes the high-level architecture of Proxim, starting with desktop-to-desktop control, then extending to mobile-to-desktop, all in Rust with Tauri.
 
 ---
 
 ## Components Overview
 
-### 1. Desktop Application (Rust)
-- Provides GUI for user interaction
-- Generates and displays QR codes
-- Launches the embedded signaling server (`proxim-server.exe`)
-- Connects to the signaling server as a desktop client
-- Receives pairing requests and manages session approval
-- Executes remote control commands (mouse, keyboard, system operations)
+### 1. Desktop Application (Rust + Tauri)
+- GUI using `iced`, `egui`, or Tauri web (HTML/JS).
+- Generates QR codes, manages session approval.
+- Embeds signaling server as Rust module (`axum`/ `warp`).
+- Executes remote control commands (mouse, keyboard, system).
 
-### 2. Signaling Server (Go)
-- Runs as a subprocess launched by the desktop app
-- Handles session registration, pairing, and expiration
-- Forwards signaling messages between desktop and mobile
-- Serves as a relay for WebRTC negotiation only (not data transfer)
+### 2. Signaling Server (Embedded in Rust)
+- Runs within desktop app as Rust module.
+- Handles session registration, pairing, expiration.
+- Relays WebRTC signaling messages.
 
-### 3. Mobile Application (Kotlin + XML)
-- Scans the desktop-generated QR code
-- Connects to the signaling server using IP/Port from QR
-- Sends pairing requests to the signaling server
-- Waits for approval from the desktop app
-- Upon approval, establishes WebRTC connection for control
+### 3. Mobile Application (Rust + Tauri)
+- HTML/JS frontend (via Tauri WebView) for QR scanning, UI.
+- Rust backend for WebRTC, signaling logic.
+- Connects to embedded signaling server.
 
 ---
 
 ## Communication Flow
 
 ```
-  Mobile App         Signaling Server           Desktop App
-      |                    |                        |
-      |--- scan QR ------>|                        |
-      |--- connect ------>|                        |
-      |--- pair request -->                        |
-      |                    |--- notify ----------->|
-      |                    |<-- approval/reject ---|
-      |<--- signaling exchange (SDP, ICE) via ---->|
-      |<---------- WebRTC peer-to-peer connection --------->|
+Mobile App (Tauri)      Signaling (Embedded Rust)     Desktop App (Rust/Tauri)
+    |                         |                           |
+    |--- scan QR ----------> |                           |
+    |--- connect ----------> |                           |
+    |--- pair_request ------>|                           |
+    |                         |--- notify ------------->|
+    |                         |<-- approval/reject ----|
+    |<--- signaling exchange (SDP, ICE) via ----------->|
+    |<---------- WebRTC peer-to-peer connection ------->|
 ```
 
-- The signaling server is used only during connection setup.
-- After signaling, the desktop and mobile communicate directly over WebRTC (peer-to-peer).
+* Desktop-to-desktop flow replaces mobile with another desktop client.
+* Signaling only for setup; WebRTC is P2P.
 
 ---
 
 ## Session Initiation
 
-1. Rust app starts and launches the signaling server
-2. User clicks "Generate QR Code"
-3. Rust generates UUID + sessionID and opens the signaling port
-4. QR code includes: `sessionID`, `UUID`, optionally `IP:port`
-5. Mobile app scans the QR and connects to signaling server
-6. Session is created and pairing begins
+1. Host desktop starts, embeds signaling server.
+2. User generates QR with `session_id`, `uuid`, optional `IP:port`.
+3. Client (PC or mobile) scans QR, connects to server.
+4. Session created, pairing begins.
 
 ---
 
 ## Session Approval and Connection
 
-- The desktop app shows device info and waits 40 seconds for manual approval
-- If approved, signaling messages are exchanged (SDP, ICE)
-- After successful WebRTC setup, full control session begins
-- If no approval is given within 40 seconds, session is deleted and QR invalidated
+- Host shows device info, waits 40 seconds for approval.
+- If approved, SDP/ICE exchanged, WebRTC connects.
+- If rejected/timed out, session invalidated.
 
 ---
 
 ## Deployment Assumptions
 
-- One session per desktop instance at a time
-- Signaling server runs locally and is not publicly hosted
-- All sessions and states are held in memory (no persistent storage)
-- WebRTC uses STUN for NAT traversal; TURN is not used
-- Port forwarding is not required; system relies on hole punching where possible
+- One session per desktop instance.
+- Signaling embedded, not publicly hosted.
+- Sessions in memory (no persistent storage).
+- WebRTC uses STUN; no TURN.
+- NAT traversal via hole punching.
 
 ---
 
 ## Notes
 
-- The signaling server is tightly coupled to the desktop app and not intended for reuse across machines
-- The architecture prioritizes simplicity, privacy, and local-first control
-- Future iterations may support external signaling servers, TURN fallback, or account systems
-
+- Prioritizes simplicity, privacy, local-first.
+- Desktop-to-desktop MVP validates core.
+- Mobile support via Tauri (Android/iOS).
+- Future: Optional external signaling, TURN.

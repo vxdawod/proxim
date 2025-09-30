@@ -1,41 +1,41 @@
 # WebRTC & STUN Setup – Proxim
 
-This document explains how to configure and use WebRTC with STUN for establishing a peer-to-peer connection between the Proxim mobile and desktop clients.
+This document explains how to configure and use WebRTC with STUN for establishing peer-to-peer connections between Proxim desktop and mobile clients, starting with desktop-to-desktop.
 
 ---
 
 ## Overview
 
-WebRTC is used in Proxim to create a direct data channel between the mobile device and the desktop app. Because most devices are behind NAT (home routers or firewalls), we use **STUN** servers to help both peers discover their public-facing IP and port.
+WebRTC creates direct data channels between clients (desktop-to-desktop initially, then mobile-to-desktop). STUN servers help peers discover public IPs/ports behind NAT. No TURN servers are used for privacy and simplicity.
 
-* **STUN** = Session Traversal Utilities for NAT
-* **TURN** is intentionally not used due to budget and privacy reasons
-* Proxim relies on WebRTC + STUN + hole punching
+* **STUN**: Session Traversal Utilities for NAT
+* **WebRTC**: Handled by `webrtc-rs` crate on both ends
+* **Tauri**: Bridges WebRTC for mobile via Rust backend and JS frontend
 
 ---
 
 ## Basic WebRTC Flow (Simplified)
 
 ```
-Mobile App              Signaling Server             Desktop App
+Mobile App (Tauri)      Signaling (Embedded Rust)     Desktop App (Rust/Tauri)
     |                         |                           |
     |--- pair_request ------> |                           |
     |                         |--- pair_prompt ---------> |
     |<---- pair_result ------ |<-- pair_response -------- |
-    |                         |                           |
     |-- SDP Offer (signal) -> |-> SDP Offer ------------> |
     |<- SDP Answer (signal) --|<- SDP Answer ------------ |
     |-- ICE Candidates -----> |-> ICE Candidates -------->|
     |<-- ICE Candidates ------|<- ICE Candidates -------- |
-    |                         |                           |
     |<-------- WebRTC Peer-to-Peer Connection --------->  |
 ```
+
+* Desktop-to-desktop flow is similar, with client PC replacing mobile.
 
 ---
 
 ## STUN Configuration
 
-STUN servers must be provided to the WebRTC engine on both sides (Rust and Android). A public free STUN server (such as Google's) is sufficient for most cases.
+Use public STUN servers (e.g., Google's) for NAT traversal.
 
 ### Recommended STUN server:
 
@@ -43,7 +43,7 @@ STUN servers must be provided to the WebRTC engine on both sides (Rust and Andro
 stun:stun.l.google.com:19302
 ```
 
-You can optionally add more for redundancy:
+Optional redundancy:
 
 ```text
 stun:stun1.l.google.com:19302
@@ -52,62 +52,75 @@ stun:stun2.l.google.com:19302
 
 ---
 
-## Desktop (Rust) – WebRTC Setup (Conceptual)
+## Desktop (Rust) – WebRTC Setup
 
-You will likely use a crate like [`webrtc`](https://github.com/webrtc-rs/webrtc) for the Rust side.
+Use `webrtc-rs` crate for desktop.
 
 ### Sample ICE config:
 
 ```rust
-let config = RTCConfiguration {
-    ice_servers: vec![
-        RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_string()],
-            ..Default::default()
-        }
-    ],
+use webrtc::api::APIBuilder;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+
+let config = webrtc::peer_connection::configuration::RTCConfiguration {
+    ice_servers: vec![RTCIceServer {
+        urls: vec!["stun:stun.l.google.com:19302".to_string()],
+        ..Default::default()
+    }],
     ..Default::default()
 };
+
+let api = APIBuilder::new().build();
+let peer_connection = api.new_peer_connection(config).await?;
 ```
 
-* Pass this `config` when creating the peer connection.
-* Use async handlers to process incoming SDP and ICE messages.
+* Handle SDP/ICE via async handlers.
+* Send/receive signaling messages via embedded `axum`/ `warp` WebSocket.
 
 ---
 
-## Mobile (Android Kotlin) – WebRTC Setup
+## Mobile (Rust + Tauri) – WebRTC Setup
 
-WebRTC for Android is provided via the `org.webrtc` library (used in Google Meet, etc).
+Use `webrtc-rs` in Rust backend, bridged to Tauri JS frontend.
 
-### Initialize PeerConnectionFactory:
+### Initialize WebRTC:
 
-```kotlin
-val options = PeerConnectionFactory.InitializationOptions.builder(context)
-    .createInitializationOptions()
-PeerConnectionFactory.initialize(options)
+```rust
+// In Tauri Rust backend
+#[tauri::command]
+async fn init_webrtc() -> Result<(), String> {
+    let config = webrtc::peer_connection::configuration::RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_string()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    // Setup peer connection
+    Ok(())
+}
 ```
 
-### Create STUN configuration:
+### JS Frontend (Tauri):
 
-```kotlin
-val iceServers = listOf(
-    PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-)
+```javascript
+import { invoke } from '@tauri-apps/api/tauri';
 
-val rtcConfig = PeerConnection.RTCConfiguration(iceServers)
+async function startWebRTC() {
+  await invoke('init_webrtc');
+  // Handle SDP/ICE via JS events, send to Rust
+}
 ```
 
-* Use `rtcConfig` when creating the peer connection.
-* Handle callbacks for `onIceCandidate`, `onAddStream`, etc.
+* Use JS to trigger Rust WebRTC logic.
+* Handle `onIceCandidate`, `onAddStream` in JS, bridge to Rust.
 
 ---
 
 ## Summary
 
-* STUN allows peer-to-peer communication across NAT/firewalls.
-* WebRTC needs signaling first (handled by your Go server).
-* After signaling, peers exchange SDP and ICE to connect directly.
-* No TURN server is used. If NAT traversal fails, connection will fail.
-
-This setup should work well for most home/office networks.
-For rare edge cases (symmetric NAT), connection may fail, but this is acceptable in MVP stage.
+* STUN enables P2P across NAT.
+* WebRTC handled by `webrtc-rs` on both ends.
+* Signaling via embedded Rust server.
+* Desktop-to-desktop tested first, then mobile.
+* No TURN; connection may fail in rare NAT cases (acceptable for MVP).

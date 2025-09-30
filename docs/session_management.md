@@ -1,30 +1,40 @@
 # Session Management – Proxim
 
-This document describes how sessions are managed by the Proxim signaling server. Sessions define the scope, duration, and approval status of each mobile-to-desktop connection attempt.
+This document describes how sessions are managed by the Proxim system, using an embedded Rust signaling server for desktop-to-desktop and later mobile-to-desktop connections.
 
 ---
 
 ## Session Structure
 
-Each session is stored in memory and represented by the following structure:
+Each session is stored in memory and represented by:
 
-```json
-{
-  "sessionID": "abc123",
-  "uuid": "desktop-uuid-456",
-  "createdAt": "2025-07-17T19:00:00Z",
-  "expiresAt": "2025-07-17T19:15:00Z",
-  "status": "pending", // or "approved", "rejected", "expired"
-  "deviceInfo": null
+```rust
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+
+#[derive(Serialize, Deserialize)]
+struct Session {
+    session_id: String,
+    uuid: String,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    status: String, // "pending", "approved", "rejected", "expired"
+    device_info: Option<DeviceInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeviceInfo {
+    name: String,
+    id: String,
 }
 ```
 
-- `sessionID`: Unique per session, generated on QR creation
-- `uuid`: Static identifier of the desktop device
-- `createdAt`: Time session was created
-- `expiresAt`: Calculated based on session type
+- `session_id`: Unique per session, generated on QR creation
+- `uuid`: Static desktop identifier
+- `created_at`: Session creation time
+- `expires_at`: Based on session type
 - `status`: Session state
-- `deviceInfo`: Populated upon pairing request
+- `device_info`: Populated on pairing request
 
 ---
 
@@ -33,49 +43,47 @@ Each session is stored in memory and represented by the following structure:
 | Type        | Description                                   | Expiration Logic               |
 |-------------|-----------------------------------------------|---------------------------------|
 | One-time    | Expires after first disconnect                | Marked expired on disconnect   |
-| Persistent  | Stays active until user deletes it manually   | No automatic expiration        |
-| Temporary   | User defines a custom time limit              | Expires at `expiresAt`         |
+| Persistent  | Stays active until manually deleted           | No automatic expiration        |
+| Temporary   | User defines a custom time limit              | Expires at `expires_at`        |
 
-Session type is selected by the user before generating the QR code.
+Session type is selected before generating the QR code.
 
 ---
 
 ## Lifecycle Flow
 
-1. Rust app generates `sessionID` + `uuid` and registers session in server memory
-2. Session stored with `status = pending`, `expiresAt` computed by type
-3. When mobile sends `pair_request`, `deviceInfo` is attached to the session
-4. Server forwards `pair_prompt` to the desktop
-5. If user approves within 40 seconds, session status becomes `approved`
-6. If rejected or timeout occurs, session status becomes `rejected` or `expired`
-7. Approved sessions allow WebRTC signaling
-8. Session is cleaned up:
-   - On manual close
-   - On disconnect (for one-time)
-   - On expiration (temporary)
+1. Rust app generates `session_id` + `uuid` and registers in memory.
+2. Session stored with `status = pending`, `expires_at` computed.
+3. Client (PC or mobile) sends `pair_request`, attaching `device_info`.
+4. Server forwards `pair_prompt` to host desktop.
+5. If approved within 40 seconds, session becomes `approved`.
+6. If rejected or timed out, session becomes `rejected` or `expired`.
+7. Approved sessions enable WebRTC.
+8. Cleanup:
+   - Manual close
+   - Disconnect (one-time)
+   - Expiration (temporary)
 
 ---
 
 ## Cleanup Mechanism
 
-- The signaling server runs a background cleanup loop (e.g. every 30 seconds)
-- It checks current time against `expiresAt`
-- Expired or inactive sessions are removed from memory
-- One-time sessions are removed after disconnect
+- Background loop (via `tokio::spawn`) checks `expires_at` every 30 seconds.
+- Expired/inactive sessions removed from memory.
+- One-time sessions removed after disconnect.
 
 ---
 
 ## Security Notes
 
-- All sessions are volatile and stored in RAM only
-- No user data or session logs are persisted
-- QR codes are single-use tokens scoped to one sessionID
+- Sessions stored in RAM only (using `tokio::sync::Mutex<HashMap>`).
+- No persistent storage or user data logging.
+- QR codes are single-use, scoped to one `session_id`.
 
 ---
 
 ## Future Considerations
 
-- Optional support for persistent sessions with manual listing/deletion
-- Optional in-memory session caching for reconnect use cases
-- Potential integration with external database (if needed)
-
+- Optional persistent session listing/deletion UI.
+- In-memory caching for reconnects.
+- External database if needed (e.g., `sled`).

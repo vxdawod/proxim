@@ -1,43 +1,41 @@
 # Signaling Protocol – Proxim
 
-This document defines the signaling protocol used by the Proxim system to establish peer-to-peer WebRTC sessions between the mobile application and the desktop application, via the embedded signaling server.
+This document defines the signaling protocol for establishing WebRTC sessions between desktop (and later mobile) clients, using an embedded Rust server.
 
 ---
 
 ## Protocol Overview
 
-- Transport: **WebSocket**
-- Message Format: **JSON**
-- Communication is routed through the signaling server
-- Messages are exchanged between:
-  - **Mobile App ↔ Signaling Server ↔ Desktop App**
+- **Transport**: WebSocket (via `axum`/ `warp` in Rust)
+- **Message Format**: JSON (via `serde`)
+- **Communication**: Routed through embedded Rust server
+- **Clients**: Desktop-to-desktop (MVP), then mobile-to-desktop
 
 ---
 
 ## Connection Setup Flow
 
-1. Desktop app launches and connects to signaling server
-2. User creates a session → generates `sessionID` + `UUID`
-3. Mobile app scans QR and connects to signaling server using `IP:port`
-4. Mobile app sends `pair_request` with `sessionID`
-5. Server forwards the request to matching desktop
-6. Desktop app shows approval prompt (with timeout)
-7. If approved, signaling messages (SDP, ICE) are exchanged
-8. WebRTC connection is established directly between peers
+1. Desktop app starts, embeds signaling server.
+2. Host generates `session_id` + `uuid`, creates QR.
+3. Client (PC or mobile) scans QR, connects to server.
+4. Client sends `pair_request`.
+5. Server forwards to host desktop.
+6. Host shows approval prompt (40 seconds).
+7. If approved, SDP/ICE exchanged via server.
+8. WebRTC connection established directly.
 
 ---
 
 ## Message Format
 
-All messages are sent over WebSocket in JSON format.
-Each message must include a `type` field.
+Messages sent over WebSocket in JSON format, using `serde`.
 
 ```json
 {
   "type": "pair_request",
   "sessionID": "abc123",
   "deviceInfo": {
-    "name": "Galaxy S23",
+    "name": "Client-PC-123",
     "id": "device-xyz"
   }
 }
@@ -47,28 +45,25 @@ Each message must include a `type` field.
 
 ## Message Types
 
-### 1. `pair_request` (from mobile → server)
-Sent after scanning QR and establishing WebSocket connection.
+### 1. `pair_request` (client → server)
 ```json
 {
   "type": "pair_request",
   "sessionID": "abc123",
-  "deviceInfo": { "name": "Galaxy S23", "id": "device-xyz" }
+  "deviceInfo": { "name": "Client-PC-123", "id": "device-xyz" }
 }
 ```
 
-### 2. `pair_prompt` (from server → desktop)
-Sent by server to notify desktop of incoming request.
+### 2. `pair_prompt` (server → host)
 ```json
 {
   "type": "pair_prompt",
   "sessionID": "abc123",
-  "deviceInfo": { "name": "Galaxy S23", "id": "device-xyz" }
+  "deviceInfo": { "name": "Client-PC-123", "id": "device-xyz" }
 }
 ```
 
-### 3. `pair_response` (from desktop → server)
-Sent after manual approval or rejection.
+### 3. `pair_response` (host → server)
 ```json
 {
   "type": "pair_response",
@@ -77,8 +72,7 @@ Sent after manual approval or rejection.
 }
 ```
 
-### 4. `pair_result` (from server → mobile)
-Server informs mobile if request was accepted or rejected.
+### 4. `pair_result` (server → client)
 ```json
 {
   "type": "pair_result",
@@ -88,7 +82,6 @@ Server informs mobile if request was accepted or rejected.
 ```
 
 ### 5. `signal` (bidirectional)
-Used for SDP and ICE exchange.
 ```json
 {
   "type": "signal",
@@ -101,15 +94,14 @@ Used for SDP and ICE exchange.
 
 ## Timeouts & Cleanup
 
-- Pairing requests expire after **40 seconds** if no response.
-- Sessions expire after **15 minutes** or as per selected session type.
-- Expired sessions are removed from server memory.
+- Pairing requests expire after 40 seconds.
+- Sessions expire after 15 minutes or per session type.
+- Expired sessions removed from memory.
 
 ---
 
 ## Notes
 
-- All connections are initiated by the client side (no push over raw TCP).
-- The signaling server does not store any data permanently.
-- The `sessionID` acts as the join key and must be unique.
-
+- Connections initiated by clients.
+- Server runs in Rust app, no external hosting.
+- `sessionID` ensures unique joins.
